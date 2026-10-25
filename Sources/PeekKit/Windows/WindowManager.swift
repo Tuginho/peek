@@ -29,12 +29,20 @@ public final class WindowManager {
 
     @discardableResult
     public func setMinimized(element: AXElement, _ minimized: Bool) -> Bool {
-        element.setAttribute(kAXMinimizedAttribute, minimized as CFBoolean)
+        setMinimizedResult(element: element, minimized) == .success
     }
 
     @discardableResult
     public func setPosition(element: AXElement, _ point: CGPoint) -> Bool {
-        element.setPosition(point)
+        setPositionResult(element: element, point) == .success
+    }
+
+    public func setPositionResult(element: AXElement, _ point: CGPoint) -> AXError {
+        element.setPositionResult(point)
+    }
+
+    public func setMinimizedResult(element: AXElement, _ minimized: Bool) -> AXError {
+        element.setAttributeResult(kAXMinimizedAttribute, minimized as CFBoolean)
     }
 
     @discardableResult

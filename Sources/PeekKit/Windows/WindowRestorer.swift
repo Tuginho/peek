@@ -49,18 +49,28 @@ public final class WindowRestorer {
 
     /// Restores one hidden window (minimize: deminiaturize; park: move back to its original
     /// frame, relocated onto `fallbackScreenAX` if the display layout changed while it was
-    /// parked), removes it from the store and stops tracking it.
+    /// parked), removes it from the store and stops tracking it. If the app could not answer
+    /// (hung, or Accessibility revoked) the entry stays, so a later restore can retry instead of
+    /// stranding the window parked with no record of it.
     @discardableResult
     public func restore(_ entry: HiddenWindow, raise: Bool) -> Bool {
-        let success: Bool
+        restoreResult(entry, raise: raise) == .success
+    }
+
+    private func restoreResult(_ entry: HiddenWindow, raise: Bool) -> AXError {
+        let result: AXError
         switch entry.method {
         case .minimize:
-            success = windowManager.setMinimized(element: entry.element, false)
+            result = windowManager.setMinimizedResult(element: entry.element, false)
         case .park:
             let screenFramesAX = ScreenLayout.currentAXFrames()
             let fallbackAX = Self.currentMainScreenAXFrame()
             let target = Geometry.restoredOrigin(for: entry.originalFrame, screenFramesAX: screenFramesAX, fallbackScreenAX: fallbackAX)
-            success = windowManager.setPosition(element: entry.element, target)
+            result = windowManager.setPositionResult(element: entry.element, target)
+        }
+
+        if Self.isTransientFailure(result) {
+            return result
         }
 
         if raise {
@@ -69,7 +79,13 @@ public final class WindowRestorer {
 
         store.remove(key: entry.key)
         tracker.untrack(entry)
-        return success
+        return result
+    }
+
+    /// The app did not answer in time (hung or busy) or Accessibility was revoked: the window
+    /// still exists, so its entry must survive for a later retry.
+    private static func isTransientFailure(_ result: AXError) -> Bool {
+        result == .cannotComplete || result == .apiDisabled
     }
 
     public func restoreAll(pid: pid_t, mode: Settings.DockClickRestoreMode) {
@@ -97,7 +113,9 @@ public final class WindowRestorer {
 
         for key in orderedKeys {
             if let entry = entriesByKey[key] {
-                restore(entry, raise: false)
+                // A hung app would make every remaining window wait out the AX timeout as well,
+                // and raising or activating it would only block again.
+                if Self.isTransientFailure(restoreResult(entry, raise: false)) { return }
             } else if let element = elementsByKey[key] {
                 // A plain minimized window the user (not Peek) minimized: `.allMinimized` mode
                 // deminiaturizes it too, but it was never tracked in the store.
@@ -110,7 +128,6 @@ public final class WindowRestorer {
 
         noteOwnActivation(pid)
         windowManager.activateApp(pid: pid)
-        store.removeAll(pid: pid)
     }
 
     public func restoreLast(pid: pid_t) {
@@ -123,7 +140,7 @@ public final class WindowRestorer {
     public func restoreAllParked() {
         for entries in store.windowsByPID.values {
             for entry in entries where entry.method == .park {
-                restore(entry, raise: false)
+                if Self.isTransientFailure(restoreResult(entry, raise: false)) { break }
             }
         }
     }

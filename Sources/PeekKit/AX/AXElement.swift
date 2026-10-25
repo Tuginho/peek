@@ -45,7 +45,11 @@ public struct AXElement: Hashable {
 
     @discardableResult
     public func setAttribute(_ name: String, _ value: CFTypeRef) -> Bool {
-        AXUIElementSetAttributeValue(raw, name as CFString, value) == .success
+        setAttributeResult(name, value) == .success
+    }
+
+    public func setAttributeResult(_ name: String, _ value: CFTypeRef) -> AXError {
+        AXUIElementSetAttributeValue(raw, name as CFString, value)
     }
 
     @discardableResult
@@ -93,9 +97,13 @@ public struct AXElement: Hashable {
 
     @discardableResult
     public func setPosition(_ point: CGPoint) -> Bool {
+        setPositionResult(point) == .success
+    }
+
+    public func setPositionResult(_ point: CGPoint) -> AXError {
         var point = point
-        guard let value = AXValueCreate(.cgPoint, &point) else { return false }
-        return setAttribute(kAXPositionAttribute, value)
+        guard let value = AXValueCreate(.cgPoint, &point) else { return .failure }
+        return setAttributeResult(kAXPositionAttribute, value)
     }
 
     public var children: [AXElement] {

@@ -45,6 +45,7 @@ public final class WindowHider {
     private func performHide(_ pid: pid_t) async {
         let app = NSRunningApplication(processIdentifier: pid)
         guard let window = windowManager.focusedWindow(of: pid),
+              !isAlreadyHidden(window),
               !window.isFullScreen,
               !window.isMinimized,
               window.canMove || window.canMinimize
@@ -56,6 +57,7 @@ public final class WindowHider {
     }
 
     public func hide(_ window: WindowInfo, focusNext: Bool) async {
+        guard !isAlreadyHidden(window) else { return }
         let app = NSRunningApplication(processIdentifier: window.pid)
 
         // Use the preferred method if it is possible; otherwise fall back to the other one.
@@ -171,6 +173,20 @@ public final class WindowHider {
 
         guard focusNext else { return }
         raiseNextOrHide(pid: window.pid, excluding: window.key, app: app)
+    }
+
+    /// An already parked window can still be focused (e.g. after Cmd+Tab with restoreOnActivate
+    /// off); hiding it again would overwrite its saved frame with the parked one. An entry whose
+    /// window is back on-screen without Peek noticing is stale: it is dropped so the window can
+    /// be hidden normally.
+    private func isAlreadyHidden(_ window: WindowInfo) -> Bool {
+        guard let entry = store.entry(for: window.key) else { return false }
+        if window.isMinimized || Geometry.isParked(window.frame, screenFramesAX: ScreenLayout.currentAXFrames()) {
+            return true
+        }
+        store.remove(key: entry.key)
+        tracker.untrack(entry)
+        return false
     }
 
     private func raiseNextOrHide(pid: pid_t, excluding key: WindowKey, app: NSRunningApplication?) {

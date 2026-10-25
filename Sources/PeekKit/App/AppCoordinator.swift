@@ -11,6 +11,7 @@ final class AppCoordinator {
     private lazy var diagnostics = Diagnostics(windowManager: windowManager)
 
     private var permissionCheckTimer: Timer?
+    private var eventTapRetryTimer: Timer?
     private(set) var servicesStarted = false
 
     private var thumbnailCache: ThumbnailCache?
@@ -141,9 +142,7 @@ final class AppCoordinator {
             }
         }
 
-        if !eventTapThread.start() {
-            openPermissions()
-        }
+        startEventTap()
 
         dockClickMonitor.start()
 
@@ -177,6 +176,22 @@ final class AppCoordinator {
         previewPanelController.start()
         dockBadgeOverlay.start()
         dockObserver.start()
+    }
+
+    /// `tapCreate` can keep failing for a moment right after Accessibility was granted, so a
+    /// failed start is retried every 2 s instead of leaving Cmd+H and Dock clicks dead until relaunch.
+    private func startEventTap() {
+        guard let eventTapThread else { return }
+        if eventTapThread.start() {
+            eventTapRetryTimer?.invalidate()
+            eventTapRetryTimer = nil
+            return
+        }
+        guard eventTapRetryTimer == nil else { return }
+        openPermissions()
+        eventTapRetryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.startEventTap() }
+        }
     }
 
     func prepareForTermination() {
