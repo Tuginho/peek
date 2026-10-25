@@ -21,6 +21,7 @@ final class DockBadgeOverlay {
     private var screenParamsObserver: NSObjectProtocol?
     private var launchObserver: NSObjectProtocol?
     private var terminateObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
 
     private var layoutWorkItem: DispatchWorkItem?
 
@@ -60,6 +61,15 @@ final class DockBadgeOverlay {
             queue: .main
         ) { [weak self] notification in
             Task { @MainActor [weak self] in self?.handleWorkspaceChange(notification) }
+        }
+        spaceObserver = workspaceCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Lays out directly instead of via scheduleLayout so a pending delayed layout (Dock
+            // relaunch, app launch) is not cancelled.
+            Task { @MainActor [weak self] in self?.layout() }
         }
 
         scheduleLayout(after: 0)
@@ -107,13 +117,20 @@ final class DockBadgeOverlay {
             itemsByURL[item.bundleURL] = item
         }
 
-        let screenFrames = NSScreen.screens.map(\.frame)
+        let screens = NSScreen.screens
+        let screenFrames = screens.map(\.frame)
         guard let primaryHeight = screenFrames.first?.height else { return }
+        let fullScreenScreenIndices = counts.isEmpty ? [] : Self.screenIndicesShowingFullScreenSpace(screens)
 
+        var shownURLs: Set<URL> = []
         for (url, count) in counts {
             guard count > 0, let item = itemsByURL[url] else { continue }
             let cocoaFrame = Geometry.cocoaRect(fromAX: item.frame, primaryScreenHeight: primaryHeight)
-            let screenFrame = screenFrames[Geometry.screenIndex(containing: cocoaFrame, screenFrames: screenFrames)]
+            let screenIndex = Geometry.screenIndex(containing: cocoaFrame, screenFrames: screenFrames)
+            // An agent app's .canJoinAllSpaces panel still draws over full-screen Spaces, where
+            // the Dock is hidden, so the badge would float over the full-screen app.
+            if fullScreenScreenIndices.contains(screenIndex) { continue }
+            let screenFrame = screenFrames[screenIndex]
             let edge = Geometry.dockEdge(itemFrame: cocoaFrame, screenFrame: screenFrame)
             let badgeSize = Self.badgeSize(for: count)
             let frame = Geometry.badgeFrame(itemFrame: cocoaFrame, badgeSize: badgeSize, edge: edge)
@@ -122,12 +139,24 @@ final class DockBadgeOverlay {
             (panel.contentView as? NSHostingView<BadgeView>)?.rootView = BadgeView(count: count)
             panel.setFrame(frame, display: true)
             panel.orderFrontRegardless()
+            shownURLs.insert(url)
         }
 
-        for (url, panel) in panels where counts[url] == nil || itemsByURL[url] == nil {
+        for (url, panel) in panels where !shownURLs.contains(url) {
             panel.orderOut(nil)
-            panels[url] = nil
+            if counts[url] == nil || itemsByURL[url] == nil {
+                panels[url] = nil
+            }
         }
+    }
+
+    private static func screenIndicesShowingFullScreenSpace(_ screens: [NSScreen]) -> Set<Int> {
+        let fullScreenDisplays = SpacesAPI.displaysShowingFullScreenSpace()
+        if fullScreenDisplays.isEmpty { return [] }
+        if fullScreenDisplays.contains("Main") { return Set(screens.indices) }
+        return Set(screens.indices.filter { index in
+            SpacesAPI.uuidString(of: screens[index]).map(fullScreenDisplays.contains) ?? false
+        })
     }
 
     private func hideAll() {
@@ -171,7 +200,8 @@ final class DockBadgeOverlay {
         panel.hasShadow = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        // Deliberately NOT .fullScreenAuxiliary: there is no Dock in full-screen Spaces.
+        // Deliberately NOT .fullScreenAuxiliary: there is no Dock in full-screen Spaces. That
+        // alone does not keep the panel out of them, so layout() also skips those displays.
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         panel.isReleasedWhenClosed = false
