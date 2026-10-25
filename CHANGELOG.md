@@ -4,21 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
-
-### Fixed
-
-- Dock badges no longer show over full-screen apps.
-- A window whose restore timed out (hung app) stays in Peek's list and can be
-  restored later instead of being stranded off-screen.
-- Cmd+H on a window that is already hidden no longer overwrites its saved
-  position.
-- Quitting Peek via `killall`/Ctrl-C now restores parked windows; a second
-  signal exits immediately.
-- The Cmd+H/Dock click event tap is retried if creating it fails right after
-  granting Accessibility.
-
-## [0.1.0] - 2026-09-18
+## [0.1.0] - 2026-10-25
 
 ### Added
 
